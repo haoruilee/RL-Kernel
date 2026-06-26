@@ -144,23 +144,38 @@ def get_cmdclass():
     return {"build_ext": BuildExtension}
 
 
+TEST_REQUIRES = ["pytest", "tabulate"]
+BENCH_REQUIRES = ["tabulate"]
+HF_REQUIRES = ["accelerate", "transformers"]
+DEV_REQUIRES = [
+    *TEST_REQUIRES,
+    "black",
+    "isort",
+    "ruff",
+    "mypy",
+    "pre-commit",
+    *HF_REQUIRES,
+]
+
+
 setup(
     name="rl-engine",
     version="0.1.0",
     packages=find_packages(include=["rl_engine", "rl_engine.*"]),
     install_requires=[
         "torch>=2.4.1",
-        "tabulate",
         "numpy",
-        "accelerate",
-        "transformers",
     ],
     ext_modules=get_extensions(),
     cmdclass=get_cmdclass(),
     extras_require={
-        "cuda": ["flashinfer"],
+        "cuda": ["flashinfer-python", "nvidia-ml-py"],
         "rocm": ["aiter"],
         "vllm": ["vllm>=0.6.0"],
+        "hf": HF_REQUIRES,
+        "bench": BENCH_REQUIRES,
+        "test": TEST_REQUIRES,
+        "dev": DEV_REQUIRES,
     },
     python_requires=">=3.10",
     include_package_data=True,

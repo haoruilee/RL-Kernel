@@ -1,4 +1,4 @@
-name: GPU CI
+name: Hardware GPU CI
 
 on:
   pull_request_target:
@@ -10,21 +10,41 @@ on:
       - 'pyproject.toml'
       - 'setup.py'
       - 'requirements*.txt'
-      - 'docker/Dockerfile.cuda'
+      - 'docker/**'
       - 'ci/run_gpu_ci.sh'
+      - 'ci/run_rocm_ci.sh'
       - '.github/workflows/gpu-ci.yml'
     types: [ opened, synchronize, reopened, labeled ]
 
 concurrency:
-  group: gpu-ci-serial
-  cancel-in-progress: false
+  group: hardware-gpu-ci-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
 
+permissions:
+  contents: read
 
 jobs:
-  gpu-tests:
+  cuda-runpod:
     if: contains(github.event.pull_request.labels.*.name, 'needs-gpu-ci')
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        include:
+          - name: cuda-a4000-tp2
+            gpu_id: NVIDIA RTX A4000
+            gpu_count: 2
+            fallback_gpu_id: NVIDIA A40
+            fallback_gpu_count: 1
+            torch_cuda_arch_list: "8.6"
+          - name: cuda-a40-tp1
+            gpu_id: NVIDIA A40
+            gpu_count: 1
+            fallback_gpu_id: NVIDIA RTX A4000
+            fallback_gpu_count: 1
+            torch_cuda_arch_list: "8.6"
     steps:
       - name: Checkout secure orchestrator script from base branch
         uses: actions/checkout@v4
@@ -51,6 +71,28 @@ jobs:
       - name: Run GPU tests on RunPod
         env:
           RUNPOD_API_KEY: ${{ secrets.RUNPOD_API_KEY }}
+          RUNPOD_GPU_ID: ${{ matrix.gpu_id }}
+          RUNPOD_GPU_COUNT: ${{ matrix.gpu_count }}
+          RUNPOD_FALLBACK_GPU_ID: ${{ matrix.fallback_gpu_id }}
+          RUNPOD_FALLBACK_GPU_COUNT: ${{ matrix.fallback_gpu_count }}
+          RUNPOD_PROFILE_NAME: ${{ matrix.name }}
+          TORCH_CUDA_ARCH_LIST: ${{ matrix.torch_cuda_arch_list }}
           PR_REPO_URL: ${{ github.event.pull_request.head.repo.clone_url }}
           PR_SHA: ${{ github.event.pull_request.head.sha }}
         run: bash ci/run_gpu_ci.sh
+
+  rocm-self-hosted:
+    if: contains(github.event.pull_request.labels.*.name, 'needs-rocm-ci')
+    runs-on: [ self-hosted, linux, x64, rocm ]
+    timeout-minutes: 90
+    steps:
+      - name: Checkout pull request code
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Run ROCm hardware tests
+        env:
+          RL_KERNEL_ROCM_ATTN_BACKEND: sdpa
+        run: bash ci/run_rocm_ci.sh

@@ -1,19 +1,30 @@
 #!/usr/bin/env bash
 set -uo pipefail
 
-# TP=2
-PRIMARY_GPU_ID="NVIDIA RTX A4000"
-PRIMARY_GPU_COUNT=2
+# TP=2 by default. The GitHub workflow overrides these values per matrix row.
+PRIMARY_GPU_ID="${RUNPOD_GPU_ID:-NVIDIA RTX A4000}"
+PRIMARY_GPU_COUNT="${RUNPOD_GPU_COUNT:-2}"
 
 # TP=1
-FALLBACK_GPU_ID="NVIDIA A40"
-FALLBACK_GPU_COUNT=1
+FALLBACK_GPU_ID="${RUNPOD_FALLBACK_GPU_ID:-NVIDIA A40}"
+FALLBACK_GPU_COUNT="${RUNPOD_FALLBACK_GPU_COUNT:-1}"
 
-CI_IMAGE="${CI_IMAGE:-runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04}"
-DISK_GB=40
-PR_SHA="${PR_SHA:-$(date +%s)}"
-POD_NAME="rl-kernel-ci-${PR_SHA:0:7}"
-READY_RETRIES=60
+DEFAULT_CI_IMAGE="runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04"
+if [ -n "${GITHUB_REPOSITORY:-}" ] && [ "${RUNPOD_USE_GHCR_IMAGE:-1}" = "1" ]; then
+  DEFAULT_CI_IMAGE="ghcr.io/${GITHUB_REPOSITORY,,}/rl-kernel-ci:cuda"
+fi
+CI_IMAGE="${CI_IMAGE:-$DEFAULT_CI_IMAGE}"
+DISK_GB="${RUNPOD_DISK_GB:-40}"
+PR_SHA="${PR_SHA:-main}"
+PR_SHA_FOR_POD="${PR_SHA}"
+if [ "$PR_SHA" = "main" ]; then
+  PR_SHA_FOR_POD="$(date +%s)"
+fi
+PROFILE_SLUG=$(printf "%s" "${RUNPOD_PROFILE_NAME:-gpu}" | tr -c "[:alnum:]-" "-")
+POD_NAME="rl-kernel-ci-${PR_SHA_FOR_POD:0:7}-${PROFILE_SLUG}"
+READY_RETRIES="${RUNPOD_READY_RETRIES:-60}"
+PYTEST_ARGS="${PYTEST_ARGS:-tests/ rl_engine/tests/ -v}"
+FLASHINFER_WHEEL_INDEX="${FLASHINFER_WHEEL_INDEX:-https://flashinfer.ai/whl/cu124/torch2.4/index.html}"
 
 POD_ID=""
 
@@ -111,14 +122,22 @@ echo "[ci] Target Establish -> root@$SSH_IP:$SSH_PORT"
 
 SSH_OPTIONS="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -p $SSH_PORT"
 
-if [ "${GPU_COUNT}" -gt 1 ]; then
-  TEST_CMD='"$PY" -m torch.distributed.run --nproc_per_node='"${GPU_COUNT}"' -m pytest tests/ -v'
-else
-  TEST_CMD='"$PY" -m pytest tests/ -v'
-fi
+printf -v REMOTE_ENV \
+  "GPU_COUNT=%q PR_REPO_URL=%q PR_SHA=%q TORCH_CUDA_ARCH_LIST=%q FORCE_CUDA=%q MAX_JOBS=%q KERNEL_ALIGN_FORCE_SM90=%q PYTEST_ARGS=%q FLASHINFER_WHEEL_INDEX=%q" \
+  "$GPU_COUNT" \
+  "${PR_REPO_URL:-https://github.com/RL-Align/RL-Kernel.git}" \
+  "$PR_SHA" \
+  "${TORCH_CUDA_ARCH_LIST:-8.6}" \
+  "${FORCE_CUDA:-1}" \
+  "${MAX_JOBS:-8}" \
+  "${KERNEL_ALIGN_FORCE_SM90:-0}" \
+  "$PYTEST_ARGS" \
+  "$FLASHINFER_WHEEL_INDEX"
 
-REMOTE_CMD='set -e
-PY=$(command -v python3.11 || command -v python3)
+echo "[ci] Launching remote test suite on GPU pod (TP=${GPU_COUNT})..."
+ssh $SSH_OPTIONS root@"$SSH_IP" "$REMOTE_ENV bash -s" <<'REMOTE'
+set -euo pipefail
+PY=$(command -v python3.11 || command -v python3 || true)
 if [ -z "$PY" ]; then echo "[remote] FATAL: python not found in PATH"; exit 127; fi
 if ! "$PY" -c "import torch" >/dev/null 2>&1; then
   for cand in python3.11 python3.10 python3; do
@@ -127,21 +146,48 @@ if ! "$PY" -c "import torch" >/dev/null 2>&1; then
   done
 fi
 echo "[remote] Using interpreter: $PY"
-export TORCH_CUDA_ARCH_LIST=8.6
-export FORCE_CUDA=1
-export MAX_JOBS=8
+export TORCH_CUDA_ARCH_LIST
+export FORCE_CUDA
+export MAX_JOBS
+export KERNEL_ALIGN_FORCE_SM90
 cd /workspace
-git clone '"${PR_REPO_URL:-https://github.com/RL-Align/RL-Kernel.git}"' repo
+git clone "$PR_REPO_URL" repo
 cd repo
-git fetch origin '"${PR_SHA}"'
-git checkout --detach '"${PR_SHA}"'
-"$PY" -m pip install -e .
-"$PY" -m pip install pytest
+git fetch origin "$PR_SHA"
+git checkout --detach "$PR_SHA"
+"$PY" -m pip install -U pip setuptools wheel
+"$PY" -m pip install flashinfer-python -f "$FLASHINFER_WHEEL_INDEX"
+"$PY" -m pip install -e ".[cuda,test]"
 nvidia-smi
-'"${TEST_CMD}"
 
-echo "[ci] Launching remote test suite on GPU pod (Distributed Execution Mode: TP=${GPU_COUNT})..."
-ssh $SSH_OPTIONS root@"$SSH_IP" "bash -lc '$REMOTE_CMD'"
+if [ "$GPU_COUNT" -gt 1 ]; then
+  cat >/tmp/rl_kernel_nccl_smoke.py <<'PY'
+import os
+
+import torch
+import torch.distributed as dist
+
+local_rank = int(os.environ["LOCAL_RANK"])
+torch.cuda.set_device(local_rank)
+dist.init_process_group("nccl")
+world_size = dist.get_world_size()
+device = torch.device("cuda", local_rank)
+value = torch.tensor([local_rank + 1], device=device, dtype=torch.float32)
+dist.all_reduce(value, op=dist.ReduceOp.SUM)
+expected = world_size * (world_size + 1) / 2
+if value.item() != expected:
+    raise SystemExit(f"unexpected all-reduce value: got {value.item()}, expected {expected}")
+if dist.get_rank() == 0:
+    print(f"[remote] NCCL all-reduce smoke passed on {world_size} GPUs")
+dist.destroy_process_group()
+PY
+  "$PY" -m torch.distributed.run --nproc_per_node="$GPU_COUNT" /tmp/rl_kernel_nccl_smoke.py
+fi
+
+# PYTEST_ARGS is owned by CI and intentionally split into pytest argv here.
+# shellcheck disable=SC2086
+"$PY" -m pytest $PYTEST_ARGS
+REMOTE
 TEST_EXIT=$?
 
 echo "[ci] Remote execution finished with exit code = $TEST_EXIT"
