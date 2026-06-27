@@ -170,7 +170,8 @@ setup(
     cmdclass=get_cmdclass(),
     extras_require={
         "cuda": ["flashinfer-python", "nvidia-ml-py"],
-        "rocm": ["aiter"],
+        # amd-aiter must be installed from source; see docs/getting_started/installation.md
+        "rocm": [],
         "vllm": ["vllm>=0.6.0"],
         "hf": HF_REQUIRES,
         "bench": BENCH_REQUIRES,

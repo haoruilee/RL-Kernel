@@ -9,9 +9,11 @@ set -euo pipefail
 if [ -n "${PR_REPO_URL:-}" ] && [ -n "${PR_SHA:-}" ]; then
   ROCM_WORK_DIR="${ROCM_WORK_DIR:-/tmp/rl-kernel-rocm-ci}"
   rm -rf "${ROCM_WORK_DIR}"
-  git clone "${PR_REPO_URL}" "${ROCM_WORK_DIR}"
+  git clone "${PR_REPO_URL}" "${ROCM_WORK_DIR}" \
+    || { echo "[rocm-ci] FATAL: git clone failed for ${PR_REPO_URL}"; exit 1; }
   cd "${ROCM_WORK_DIR}"
-  git fetch origin "${PR_SHA}"
+  git fetch origin "${PR_SHA}" \
+    || { echo "[rocm-ci] FATAL: git fetch failed for ${PR_SHA}"; exit 1; }
   git checkout --detach "${PR_SHA}"
   echo "[rocm-ci] Running PR code from ${PR_REPO_URL} @ ${PR_SHA:0:7}"
 fi
@@ -46,7 +48,7 @@ FLASH_AUTO_INSTALL="${RL_KERNEL_ROCM_FLASH_ATTN_AUTO_INSTALL:-1}"
 PYTEST_ARGS="${PYTEST_ARGS:-rl_engine/tests/test_dispatch.py tests/test_kernel_registry.py tests/test_attention_correctness.py tests/test_linear_logp.py tests/test_ratio_kl.py -q -rs}"
 
 "$PY" -m pip install -U pip setuptools wheel
-"$PY" -m pip install -e ".[rocm,test]"
+"$PY" -m pip install -e ".[test]"
 
 case "${ATTN_BACKEND}" in
   flash_attn|flash-attn|flash_attention)

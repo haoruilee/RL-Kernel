@@ -19,7 +19,8 @@ dependencies = [
 
 [project.optional-dependencies]
 cuda = ["flashinfer-python", "nvidia-ml-py"]
-rocm = ["aiter"]
+# amd-aiter must be installed from source; see docs/getting_started/installation.md#rocm-backend
+rocm = []
 vllm = ["vllm>=0.6.0"]
 hf = ["accelerate", "transformers"]
 bench = ["tabulate"]

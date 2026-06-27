@@ -23,7 +23,7 @@ docker run --rm --gpus all \
   -v "$PWD:/workspace/RL-Kernel" \
   -w /workspace/RL-Kernel \
   rl-kernel-ci:cuda \
-  bash -lc 'pip install -e ".[test]" && python -m pytest tests/test_kernel_registry.py -q'
+  bash -lc 'pip install -e ".[cuda,test]" && python -m pytest tests/test_kernel_registry.py -q'
 ```
 
 Run ROCm tests on an AMD host with ROCm devices exposed:
@@ -96,3 +96,17 @@ job runs `ci/run_rocm_ci.sh` on real AMD hardware.
 Fallback behavior for unavailable hardware-specific dependencies is covered by
 `tests/test_kernel_registry.py`, including the case where SM90/TMA extension
 symbols are missing or the current NVIDIA GPU is not Hopper-class.
+
+### Required GitHub Actions secrets
+
+The following secrets must be configured in the repository (or fork) settings
+for hardware CI to work:
+
+| Secret | Purpose |
+|--------|---------|
+| `RUNPOD_API_KEY` | Authenticates `runpodctl` pod creation/removal for CUDA CI |
+| `RUNPOD_SSH_PRIVATE_KEY` | Ed25519 private key for SSH access to RunPod pods |
+
+The **public key** counterpart of `RUNPOD_SSH_PRIVATE_KEY` must be registered in
+your RunPod account under **Settings → SSH Public Keys** before GPU CI will be
+able to connect to the provisioned pod.

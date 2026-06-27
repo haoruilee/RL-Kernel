@@ -65,6 +65,12 @@ pip install -e ".[dev]"
 pip install -r requirements-docs.txt
 ```
 
+## Testing
+
+Pre-built Docker CI images are available for both CUDA and ROCm environments.
+See the [Testing guide](../contributing/testing.md) for instructions on building
+the images, running tests locally, and triggering hardware CI on pull requests.
+
 ## Documentation Preview
 
 ```bash

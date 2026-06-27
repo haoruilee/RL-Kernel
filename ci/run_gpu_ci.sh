@@ -85,7 +85,7 @@ fi
 
 POD_ID=$(echo "$CREATE_OUT" | grep -oE '"id":\s*"[a-z0-9]{8,}"' | cut -d '"' -f4 | head -1)
 if [ -z "$POD_ID" ]; then
-  POD_ID=$(echo "$CREATE_OUT" | grep -oE '"[a-z0-9]{8,}"' | tr -d '"' | head -1)
+  POD_ID=$(echo "$CREATE_OUT" | grep -oE '"id":[[:space:]]*"([a-z0-9]{8,})"' | grep -oE '[a-z0-9]{8,}' | head -1)
 fi
 
 if [ -z "$POD_ID" ]; then
@@ -186,11 +186,7 @@ fi
 
 # PYTEST_ARGS is owned by CI and intentionally split into pytest argv here.
 # shellcheck disable=SC2086
-if [ "$GPU_COUNT" -gt 1 ]; then
-  "$PY" -m torch.distributed.run --nproc_per_node="$GPU_COUNT" -m pytest $PYTEST_ARGS
-else
-  "$PY" -m pytest $PYTEST_ARGS
-fi
+"$PY" -m pytest $PYTEST_ARGS
 REMOTE
 TEST_EXIT=$?
 
