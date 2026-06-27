@@ -1,6 +1,21 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# When invoked from GitHub Actions (pull_request_target), the workflow checks
+# out the base branch (trusted CI scripts) and passes the fork's coordinates
+# via PR_REPO_URL + PR_SHA.  We clone the PR code into an isolated /tmp
+# workspace here so that untrusted fork code never executes on the self-hosted
+# runner with elevated host privileges.
+if [ -n "${PR_REPO_URL:-}" ] && [ -n "${PR_SHA:-}" ]; then
+  ROCM_WORK_DIR="${ROCM_WORK_DIR:-/tmp/rl-kernel-rocm-ci}"
+  rm -rf "${ROCM_WORK_DIR}"
+  git clone "${PR_REPO_URL}" "${ROCM_WORK_DIR}"
+  cd "${ROCM_WORK_DIR}"
+  git fetch origin "${PR_SHA}"
+  git checkout --detach "${PR_SHA}"
+  echo "[rocm-ci] Running PR code from ${PR_REPO_URL} @ ${PR_SHA:0:7}"
+fi
+
 PY="${PYTHON:-$(command -v python3 || command -v python || true)}"
 if [ -z "$PY" ]; then
   echo "[rocm-ci] FATAL: python not found in PATH"

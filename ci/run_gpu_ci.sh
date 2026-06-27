@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -uo pipefail
+set -euo pipefail
 
 # TP=2 by default. The GitHub workflow overrides these values per matrix row.
 PRIMARY_GPU_ID="${RUNPOD_GPU_ID:-NVIDIA RTX A4000}"
@@ -157,7 +157,7 @@ git fetch origin "$PR_SHA"
 git checkout --detach "$PR_SHA"
 "$PY" -m pip install -U pip setuptools wheel
 "$PY" -m pip install flashinfer-python -f "$FLASHINFER_WHEEL_INDEX"
-"$PY" -m pip install -e ".[cuda,test]"
+"$PY" -m pip install -e ".[cuda,test,hf]"
 nvidia-smi
 
 if [ "$GPU_COUNT" -gt 1 ]; then
@@ -186,7 +186,11 @@ fi
 
 # PYTEST_ARGS is owned by CI and intentionally split into pytest argv here.
 # shellcheck disable=SC2086
-"$PY" -m pytest $PYTEST_ARGS
+if [ "$GPU_COUNT" -gt 1 ]; then
+  "$PY" -m torch.distributed.run --nproc_per_node="$GPU_COUNT" -m pytest $PYTEST_ARGS
+else
+  "$PY" -m pytest $PYTEST_ARGS
+fi
 REMOTE
 TEST_EXIT=$?
 

@@ -86,13 +86,17 @@ jobs:
     runs-on: [ self-hosted, linux, x64, rocm ]
     timeout-minutes: 90
     steps:
-      - name: Checkout pull request code
+      # Check out only the base branch so fork-controlled code never runs on
+      # the self-hosted runner with host privileges.  run_rocm_ci.sh clones the
+      # PR code into an isolated /tmp workspace at test time.
+      - name: Checkout secure CI scripts from base branch
         uses: actions/checkout@v4
         with:
-          repository: ${{ github.event.pull_request.head.repo.full_name }}
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ github.event.pull_request.base.sha }}
 
       - name: Run ROCm hardware tests
         env:
           RL_KERNEL_ROCM_ATTN_BACKEND: sdpa
+          PR_REPO_URL: ${{ github.event.pull_request.head.repo.clone_url }}
+          PR_SHA: ${{ github.event.pull_request.head.sha }}
         run: bash ci/run_rocm_ci.sh

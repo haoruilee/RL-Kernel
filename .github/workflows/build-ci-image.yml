@@ -57,6 +57,7 @@ jobs:
           push: false
           tags: ${{ env.IMAGE }}:${{ matrix.tag }}
           cache-from: type=gha,scope=ci-image-${{ matrix.backend }}
+          cache-to: type=gha,mode=max,scope=ci-image-${{ matrix.backend }}
 
   build-and-push:
     if: github.event_name != 'pull_request'
