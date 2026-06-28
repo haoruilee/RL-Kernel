@@ -87,6 +87,8 @@ __global__ void fused_linear_logp_sm90_kernel(const __grid_constant__ CUtensorMa
 
     const uint32_t sH_base = static_cast<uint32_t>(__cvta_generic_to_shared(sH));
     const uint32_t sW_base = static_cast<uint32_t>(__cvta_generic_to_shared(sW));
+    const uint64_t h_tmap_addr = reinterpret_cast<uint64_t>(&h_tmap);
+    const uint64_t w_tmap_addr = reinterpret_cast<uint64_t>(&w_tmap);
     int mbar[STAGES];
 #pragma unroll
     for (int s = 0; s < STAGES; ++s)
@@ -101,6 +103,8 @@ __global__ void fused_linear_logp_sm90_kernel(const __grid_constant__ CUtensorMa
 #pragma unroll
         for (int s = 0; s < STAGES; ++s)
             mbarrier_init(mbar[s], 1);
+        asm volatile("prefetch.tensormap [%0];" :: "l"(h_tmap_addr) : "memory");
+        asm volatile("prefetch.tensormap [%0];" :: "l"(w_tmap_addr) : "memory");
         asm volatile("fence.mbarrier_init.release.cluster;");
     }
     __syncthreads();
@@ -112,9 +116,9 @@ __global__ void fused_linear_logp_sm90_kernel(const __grid_constant__ CUtensorMa
         const int buf = k % STAGES;
         const int k_off = k * BK;
         mbarrier_arrive_expect_tx(mbar[buf], tile_bytes);
-        tma_2d_g2s(static_cast<int>(sH_base + buf * BM * BK * sizeof(nv_bfloat16)), &h_tmap, k_off,
+        tma_2d_g2s(sH_base + buf * BM * BK * sizeof(nv_bfloat16), h_tmap_addr, k_off,
                    row_base, mbar[buf]);
-        tma_2d_g2s(static_cast<int>(sW_base + buf * BN * BK * sizeof(nv_bfloat16)), &w_tmap, k_off,
+        tma_2d_g2s(sW_base + buf * BN * BK * sizeof(nv_bfloat16), w_tmap_addr, k_off,
                    col_base, mbar[buf]);
     };
 

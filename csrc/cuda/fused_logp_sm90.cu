@@ -24,6 +24,7 @@ __global__ void fused_logp_online_tma_kernel(
 
     extern __shared__ __align__(1024) char smem[];
     const int smem_addr = static_cast<int>(__cvta_generic_to_shared(smem));
+    const uint64_t logits_tmap_addr = reinterpret_cast<uint64_t>(&logits_tmap);
     nv_bfloat16* smem_logits = reinterpret_cast<nv_bfloat16*>(smem);
 
     const int tma_mbar_addr = smem_addr + (TILE_V * sizeof(nv_bfloat16));
@@ -32,6 +33,7 @@ __global__ void fused_logp_online_tma_kernel(
     if (warp_id == 0 && lane_id == 0) {
         mbarrier_init(tma_mbar_addr, 1);
         mbarrier_init(mma_mbar_addr, (NUM_WARPS - 1) * 32);
+        asm volatile("prefetch.tensormap [%0];" :: "l"(logits_tmap_addr) : "memory");
         asm volatile("fence.mbarrier_init.release.cluster;");
     }
     __syncthreads();
@@ -48,7 +50,7 @@ __global__ void fused_logp_online_tma_kernel(
 
             if (lane_id == 0) {
                 mbarrier_arrive_expect_tx(tma_mbar_addr, current_tile_size * sizeof(nv_bfloat16));
-                tma_2d_g2s(smem_addr, &logits_tmap, col_offset, row_idx, tma_mbar_addr);
+                tma_2d_g2s(smem_addr, logits_tmap_addr, col_offset, row_idx, tma_mbar_addr);
             }
             phase ^= 1;
         }
