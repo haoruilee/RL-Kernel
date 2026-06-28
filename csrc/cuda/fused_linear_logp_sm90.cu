@@ -6,6 +6,7 @@
 
 #include "../utils/tma_utils.cuh"
 #include <ATen/cuda/CUDAContext.h>
+#include <c10/cuda/CUDAException.h>
 #include <algorithm>
 #include <cuda_bf16.h>
 #include <math_constants.h>
@@ -52,8 +53,8 @@ __device__ __forceinline__ void mma_m16n8k16(const uint32_t A[4], const uint32_t
 }
 
 
-__global__ void fused_linear_logp_sm90_kernel(const __grid_constant__ CUtensorMap h_tmap,
-                                              const __grid_constant__ CUtensorMap w_tmap,
+__global__ void fused_linear_logp_sm90_kernel(const CUtensorMap *__restrict__ h_tmap,
+                                              const CUtensorMap *__restrict__ w_tmap,
                                               const int *__restrict__ target,
                                               const float *__restrict__ bias, // may be null
                                               float *__restrict__ part_max,   // [n_split, N]
@@ -87,8 +88,8 @@ __global__ void fused_linear_logp_sm90_kernel(const __grid_constant__ CUtensorMa
 
     const uint32_t sH_base = static_cast<uint32_t>(__cvta_generic_to_shared(sH));
     const uint32_t sW_base = static_cast<uint32_t>(__cvta_generic_to_shared(sW));
-    const uint64_t h_tmap_addr = __cvta_generic_to_grid_constant(&h_tmap);
-    const uint64_t w_tmap_addr = __cvta_generic_to_grid_constant(&w_tmap);
+    const uint64_t h_tmap_addr = __cvta_generic_to_global(h_tmap);
+    const uint64_t w_tmap_addr = __cvta_generic_to_global(w_tmap);
     int mbar[STAGES];
 #pragma unroll
     for (int s = 0; s < STAGES; ++s)
@@ -103,8 +104,8 @@ __global__ void fused_linear_logp_sm90_kernel(const __grid_constant__ CUtensorMa
 #pragma unroll
         for (int s = 0; s < STAGES; ++s)
             mbarrier_init(mbar[s], 1);
-        asm volatile("prefetch.param.tensormap [%0];" :: "l"(h_tmap_addr) : "memory");
-        asm volatile("prefetch.param.tensormap [%0];" :: "l"(w_tmap_addr) : "memory");
+        asm volatile("prefetch.tensormap [%0];" :: "l"(h_tmap_addr) : "memory");
+        asm volatile("prefetch.tensormap [%0];" :: "l"(w_tmap_addr) : "memory");
         asm volatile("fence.mbarrier_init.release.cluster;");
     }
     __syncthreads();
@@ -366,16 +367,30 @@ std::vector<torch::Tensor> fused_linear_logp_sm90_forward(torch::Tensor hidden,
                              cudaFuncAttributeMaxDynamicSharedMemorySize, smem);
     }
 
+    CUtensorMap *h_tmap_dev = nullptr;
+    CUtensorMap *w_tmap_dev = nullptr;
+    auto stream = at::cuda::getCurrentCUDAStream();
+    C10_CUDA_CHECK(cudaMalloc(&h_tmap_dev, sizeof(CUtensorMap)));
+    C10_CUDA_CHECK(cudaMalloc(&w_tmap_dev, sizeof(CUtensorMap)));
+    C10_CUDA_CHECK(cudaMemcpyAsync(h_tmap_dev, &h_tmap, sizeof(CUtensorMap), cudaMemcpyHostToDevice,
+                                   stream));
+    C10_CUDA_CHECK(cudaMemcpyAsync(w_tmap_dev, &w_tmap, sizeof(CUtensorMap), cudaMemcpyHostToDevice,
+                                   stream));
+
     dim3 grid(row_blocks, n_split);
-    fused_linear_logp_sm90_kernel<<<grid, WG_THREADS, smem>>>(
-        h_tmap, w_tmap, target_i.data_ptr<int>(), bias_ptr, part_max.data_ptr<float>(),
+    fused_linear_logp_sm90_kernel<<<grid, WG_THREADS, smem, stream>>>(
+        h_tmap_dev, w_tmap_dev, target_i.data_ptr<int>(), bias_ptr, part_max.data_ptr<float>(),
         part_sum.data_ptr<float>(), part_zt.data_ptr<float>(), N, D, V, n_split);
 
     const int combine_threads = 256;
     const int combine_blocks = (N + combine_threads - 1) / combine_threads;
-    fused_linear_logp_sm90_combine_kernel<<<combine_blocks, combine_threads>>>(
+    fused_linear_logp_sm90_combine_kernel<<<combine_blocks, combine_threads, 0, stream>>>(
         part_max.data_ptr<float>(), part_sum.data_ptr<float>(), part_zt.data_ptr<float>(),
         logp.data_ptr<float>(), lse.data_ptr<float>(), N, n_split);
+    C10_CUDA_KERNEL_LAUNCH_CHECK();
+    C10_CUDA_CHECK(cudaStreamSynchronize(stream));
+    C10_CUDA_CHECK(cudaFree(h_tmap_dev));
+    C10_CUDA_CHECK(cudaFree(w_tmap_dev));
 
     return {logp, lse};
 }

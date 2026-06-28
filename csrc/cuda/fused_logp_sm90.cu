@@ -2,6 +2,8 @@
 // Copyright (c) 2026 RL-Kernel Contributors
 
 #include "../utils/tma_utils.cuh"
+#include <ATen/cuda/CUDAContext.h>
+#include <c10/cuda/CUDAException.h>
 #include <math_constants.h>
 #include <torch/extension.h>
 #include <cub/cub.cuh>
@@ -10,7 +12,7 @@
 
 template<int NUM_WARPS>
 __global__ void fused_logp_online_tma_kernel(
-    const __grid_constant__ CUtensorMap logits_tmap,
+    const CUtensorMap* __restrict__ logits_tmap,
     const int* __restrict__ labels,
     const nv_bfloat16* __restrict__ logits_gmem,
     float* __restrict__ output_logp,
@@ -24,7 +26,7 @@ __global__ void fused_logp_online_tma_kernel(
 
     extern __shared__ __align__(1024) char smem[];
     const int smem_addr = static_cast<int>(__cvta_generic_to_shared(smem));
-    const uint64_t logits_tmap_addr = __cvta_generic_to_grid_constant(&logits_tmap);
+    const uint64_t logits_tmap_addr = __cvta_generic_to_global(logits_tmap);
     nv_bfloat16* smem_logits = reinterpret_cast<nv_bfloat16*>(smem);
 
     const int tma_mbar_addr = smem_addr + (TILE_V * sizeof(nv_bfloat16));
@@ -33,7 +35,7 @@ __global__ void fused_logp_online_tma_kernel(
     if (warp_id == 0 && lane_id == 0) {
         mbarrier_init(tma_mbar_addr, 1);
         mbarrier_init(mma_mbar_addr, (NUM_WARPS - 1) * 32);
-        asm volatile("prefetch.param.tensormap [%0];" :: "l"(logits_tmap_addr) : "memory");
+        asm volatile("prefetch.tensormap [%0];" :: "l"(logits_tmap_addr) : "memory");
         asm volatile("fence.mbarrier_init.release.cluster;");
     }
     __syncthreads();
@@ -120,10 +122,19 @@ torch::Tensor fused_logp_sm90_forward(torch::Tensor logits, torch::Tensor labels
                     TILE_V);
 
     int smem_size = (TILE_V * sizeof(nv_bfloat16)) + 16;
-    fused_logp_online_tma_kernel<4><<<B, 128, smem_size>>>(
-        logits_tmap, labels.data_ptr<int>(),
+    CUtensorMap *logits_tmap_dev = nullptr;
+    auto stream = at::cuda::getCurrentCUDAStream();
+    C10_CUDA_CHECK(cudaMalloc(&logits_tmap_dev, sizeof(CUtensorMap)));
+    C10_CUDA_CHECK(cudaMemcpyAsync(logits_tmap_dev, &logits_tmap, sizeof(CUtensorMap),
+                                   cudaMemcpyHostToDevice, stream));
+
+    fused_logp_online_tma_kernel<4><<<B, 128, smem_size, stream>>>(
+        logits_tmap_dev, labels.data_ptr<int>(),
         reinterpret_cast<const nv_bfloat16*>(logits.data_ptr<at::BFloat16>()),
         output.data_ptr<float>(), B, V
     );
+    C10_CUDA_KERNEL_LAUNCH_CHECK();
+    C10_CUDA_CHECK(cudaStreamSynchronize(stream));
+    C10_CUDA_CHECK(cudaFree(logits_tmap_dev));
     return output;
 }
