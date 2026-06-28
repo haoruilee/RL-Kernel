@@ -26,7 +26,7 @@ READY_RETRIES="${RUNPOD_READY_RETRIES:-60}"
 PYTEST_ARGS="${PYTEST_ARGS:-tests/ rl_engine/tests/ -v}"
 FLASHINFER_WHEEL_INDEX="${FLASHINFER_WHEEL_INDEX:-https://flashinfer.ai/whl/cu124/torch2.4/index.html}"
 RUNPOD_MIN_CUDA_VERSION="${RUNPOD_MIN_CUDA_VERSION:-12.4}"
-RUNPOD_TERMINATE_AFTER="${RUNPOD_TERMINATE_AFTER:-2h}"
+RUNPOD_TERMINATE_AFTER="${RUNPOD_TERMINATE_AFTER:-$(date -u -d '+2 hours' '+%Y-%m-%dT%H:%M:%SZ')}"
 
 POD_ID=""
 
@@ -56,6 +56,7 @@ GPU_ID=$PRIMARY_GPU_ID
 GPU_COUNT=$PRIMARY_GPU_COUNT
 
 echo "[ci] Attempt 1: create pod: ${GPU_COUNT}x ${GPU_ID}"
+CREATE_STATUS=0
 CREATE_OUT=$(runpodctl pod create \
   --name "$POD_NAME" \
   --gpu-id "$GPU_ID" \
@@ -65,16 +66,17 @@ CREATE_OUT=$(runpodctl pod create \
   --cloud-type SECURE \
   --min-cuda-version "$RUNPOD_MIN_CUDA_VERSION" \
   --terminate-after "$RUNPOD_TERMINATE_AFTER" \
-  --ports "22/tcp" 2>&1)
+  --ports "22/tcp" 2>&1) || CREATE_STATUS=$?
 
 # Fallback 触发
-if echo "$CREATE_OUT" | grep -qi "no longer any instances available"; then
+if [ "$CREATE_STATUS" -ne 0 ] && echo "$CREATE_OUT" | grep -qi "no longer any instances available"; then
   echo "[ci] WARN: ${GPU_COUNT}x ${GPU_ID} sold out! Triggering elastic Fallback..."
 
   GPU_ID=$FALLBACK_GPU_ID
   GPU_COUNT=$FALLBACK_GPU_COUNT
 
   echo "[ci] Attempt 2 (Fallback): create pod: ${GPU_COUNT}x ${GPU_ID}"
+  CREATE_STATUS=0
   CREATE_OUT=$(runpodctl pod create \
     --name "$POD_NAME" \
     --gpu-id "$GPU_ID" \
@@ -84,12 +86,17 @@ if echo "$CREATE_OUT" | grep -qi "no longer any instances available"; then
     --cloud-type SECURE \
     --min-cuda-version "$RUNPOD_MIN_CUDA_VERSION" \
     --terminate-after "$RUNPOD_TERMINATE_AFTER" \
-    --ports "22/tcp" 2>&1)
+    --ports "22/tcp" 2>&1) || CREATE_STATUS=$?
 
-  if echo "$CREATE_OUT" | grep -qi "no longer any instances available"; then
+  if [ "$CREATE_STATUS" -ne 0 ] && echo "$CREATE_OUT" | grep -qi "no longer any instances available"; then
     echo "[ci] FATAL: Alternatives (${GPU_COUNT}x ${GPU_ID}) have also been exhausted. Please try CI again later."
     exit 1
   fi
+fi
+
+if [ "$CREATE_STATUS" -ne 0 ]; then
+  echo "[ci] ERROR: Failed to create pod. Output: $CREATE_OUT"
+  exit "$CREATE_STATUS"
 fi
 
 POD_ID=$(echo "$CREATE_OUT" | grep -oE '"id":\s*"[a-z0-9]{8,}"' | cut -d '"' -f4 | head -1)
