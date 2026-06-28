@@ -87,8 +87,8 @@ __global__ void fused_linear_logp_sm90_kernel(const __grid_constant__ CUtensorMa
 
     const uint32_t sH_base = static_cast<uint32_t>(__cvta_generic_to_shared(sH));
     const uint32_t sW_base = static_cast<uint32_t>(__cvta_generic_to_shared(sW));
-    const uint64_t h_tmap_addr = reinterpret_cast<uint64_t>(&h_tmap);
-    const uint64_t w_tmap_addr = reinterpret_cast<uint64_t>(&w_tmap);
+    const uint64_t h_tmap_addr = __cvta_generic_to_grid_constant(&h_tmap);
+    const uint64_t w_tmap_addr = __cvta_generic_to_grid_constant(&w_tmap);
     int mbar[STAGES];
 #pragma unroll
     for (int s = 0; s < STAGES; ++s)
@@ -103,8 +103,8 @@ __global__ void fused_linear_logp_sm90_kernel(const __grid_constant__ CUtensorMa
 #pragma unroll
         for (int s = 0; s < STAGES; ++s)
             mbarrier_init(mbar[s], 1);
-        asm volatile("prefetch.tensormap [%0];" :: "l"(h_tmap_addr) : "memory");
-        asm volatile("prefetch.tensormap [%0];" :: "l"(w_tmap_addr) : "memory");
+        asm volatile("prefetch.param.tensormap [%0];" :: "l"(h_tmap_addr) : "memory");
+        asm volatile("prefetch.param.tensormap [%0];" :: "l"(w_tmap_addr) : "memory");
         asm volatile("fence.mbarrier_init.release.cluster;");
     }
     __syncthreads();
