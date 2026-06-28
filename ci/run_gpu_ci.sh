@@ -176,6 +176,7 @@ export TORCH_CUDA_ARCH_LIST
 export FORCE_CUDA
 export MAX_JOBS
 export KERNEL_ALIGN_FORCE_SM90
+mkdir -p /workspace
 cd /workspace
 git clone "$PR_REPO_URL" repo
 cd repo
