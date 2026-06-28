@@ -17,13 +17,27 @@ class FusedLogpSM90Op:
                 "Please rebuild extension using 'pip install -e .'"
             )
         self.op = _C.fused_logp_sm90
+        self._generic_fallback: FusedLogpGenericOp | None = None
         logger.info("Successfully linked to precompiled _C.fused_logp_sm90 kernel.")
 
+    def _generic(self) -> "FusedLogpGenericOp":
+        if self._generic_fallback is None:
+            self._generic_fallback = FusedLogpGenericOp()
+        return self._generic_fallback
+
+    def _can_use_tma(self, logits: torch.Tensor) -> bool:
+        return logits.dtype == torch.bfloat16 and logits.is_contiguous()
+
     def __call__(self, logits: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
-        assert logits.dtype == torch.bfloat16, "TMA logp currently requires bfloat16 logits"
-        assert logits.is_contiguous(), "Logits must be contiguous for TMA block loading"
+        if not self._can_use_tma(logits):
+            return self._generic().apply_fp32(logits, labels)
         labels_fused = labels.to(device=logits.device, dtype=torch.int32).contiguous()
         return self.op(logits, labels_fused)
+
+    def apply_fp32(self, logits: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
+        if self._can_use_tma(logits):
+            return self(logits, labels).float()
+        return self._generic().apply_fp32(logits, labels)
 
 
 class FusedLogpGenericOp:
