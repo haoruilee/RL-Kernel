@@ -192,6 +192,7 @@ else
 fi
 "$PY" -m pip install "${PIP_INSTALL_ARGS[@]}" flashinfer-python -f "$FLASHINFER_WHEEL_INDEX"
 "$PY" -m pip install "${PIP_INSTALL_ARGS[@]}" -e ".[cuda,test,hf]"
+"$PY" setup.py build_ext --inplace
 nvidia-smi
 "$PY" - <<'PY'
 import sys
