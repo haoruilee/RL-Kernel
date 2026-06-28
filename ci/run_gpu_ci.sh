@@ -24,12 +24,20 @@ PROFILE_SLUG=$(printf "%s" "${RUNPOD_PROFILE_NAME:-gpu}" | tr -c "[:alnum:]-" "-
 POD_NAME="rl-kernel-ci-${PR_SHA_FOR_POD:0:7}-${PROFILE_SLUG}"
 READY_RETRIES="${RUNPOD_READY_RETRIES:-60}"
 SSH_READY_RETRIES="${RUNPOD_SSH_READY_RETRIES:-30}"
+REMOTE_ATTEMPTS="${RUNPOD_REMOTE_ATTEMPTS:-2}"
 PYTEST_ARGS="${PYTEST_ARGS:-tests/ rl_engine/tests/ -v}"
 FLASHINFER_WHEEL_INDEX="${FLASHINFER_WHEEL_INDEX:-https://flashinfer.ai/whl/cu124/torch2.4/index.html}"
 RUNPOD_MIN_CUDA_VERSION="${RUNPOD_MIN_CUDA_VERSION:-12.4}"
 RUNPOD_TERMINATE_AFTER="${RUNPOD_TERMINATE_AFTER:-$(date -u -d '+2 hours' '+%Y-%m-%dT%H:%M:%SZ')}"
 
 POD_ID=""
+RUNPOD_LOCATION_ARGS=()
+if [ -n "${RUNPOD_DATA_CENTER_IDS:-}" ]; then
+  RUNPOD_LOCATION_ARGS+=(--data-center-ids "$RUNPOD_DATA_CENTER_IDS")
+fi
+if [ -n "${RUNPOD_COUNTRY_CODE:-}" ]; then
+  RUNPOD_LOCATION_ARGS+=(--country-code "$RUNPOD_COUNTRY_CODE")
+fi
 
 cleanup() {
   trap - EXIT INT TERM
@@ -67,7 +75,8 @@ CREATE_OUT=$(runpodctl pod create \
   --cloud-type SECURE \
   --min-cuda-version "$RUNPOD_MIN_CUDA_VERSION" \
   --terminate-after "$RUNPOD_TERMINATE_AFTER" \
-  --ports "22/tcp" 2>&1) || CREATE_STATUS=$?
+  --ports "22/tcp" \
+  "${RUNPOD_LOCATION_ARGS[@]}" 2>&1) || CREATE_STATUS=$?
 
 # Fallback 触发
 if [ "$CREATE_STATUS" -ne 0 ] && echo "$CREATE_OUT" | grep -qi "no longer any instances available"; then
@@ -87,7 +96,8 @@ if [ "$CREATE_STATUS" -ne 0 ] && echo "$CREATE_OUT" | grep -qi "no longer any in
     --cloud-type SECURE \
     --min-cuda-version "$RUNPOD_MIN_CUDA_VERSION" \
     --terminate-after "$RUNPOD_TERMINATE_AFTER" \
-    --ports "22/tcp" 2>&1) || CREATE_STATUS=$?
+    --ports "22/tcp" \
+    "${RUNPOD_LOCATION_ARGS[@]}" 2>&1) || CREATE_STATUS=$?
 
   if [ "$CREATE_STATUS" -ne 0 ] && echo "$CREATE_OUT" | grep -qi "no longer any instances available"; then
     echo "[ci] FATAL: Alternatives (${GPU_COUNT}x ${GPU_ID}) have also been exhausted. Please try CI again later."
@@ -179,7 +189,7 @@ printf -v REMOTE_ENV \
   "${RUNPOD_UPGRADE_BUILD_TOOLS:-0}" \
   "${RUNPOD_INSTALL_FLASHINFER:-0}"
 
-echo "[ci] Launching remote test suite on GPU pod (TP=${GPU_COUNT})..."
+run_remote_suite() {
 ssh $SSH_OPTIONS root@"$SSH_IP" "$REMOTE_ENV bash -s" <<'REMOTE'
 set -euo pipefail
 PY=$(command -v python3.11 || command -v python3 || true)
@@ -198,6 +208,7 @@ export KERNEL_ALIGN_FORCE_SM90
 PIP_INSTALL_ARGS=(--timeout 60 --retries 10 --resume-retries 5)
 mkdir -p /workspace
 cd /workspace
+rm -rf repo
 git clone "$PR_REPO_URL" repo
 cd repo
 git fetch origin "$PR_SHA"
@@ -279,7 +290,28 @@ fi
 # shellcheck disable=SC2086
 "$PY" -m pytest $PYTEST_ARGS
 REMOTE
-TEST_EXIT=$?
+}
+
+echo "[ci] Launching remote test suite on GPU pod (TP=${GPU_COUNT})..."
+TEST_EXIT=0
+for attempt in $(seq 1 "$REMOTE_ATTEMPTS"); do
+  if [ "$REMOTE_ATTEMPTS" -gt 1 ]; then
+    echo "[ci] Remote execution attempt $attempt/$REMOTE_ATTEMPTS"
+  fi
+
+  set +e
+  run_remote_suite
+  TEST_EXIT=$?
+  set -e
+
+  if [ "$TEST_EXIT" -eq 255 ] && [ "$attempt" -lt "$REMOTE_ATTEMPTS" ]; then
+    echo "[ci] WARN: SSH remote execution disconnected; retrying after 10s..."
+    sleep 10
+    continue
+  fi
+
+  break
+done
 
 echo "[ci] Remote execution finished with exit code = $TEST_EXIT"
 exit $TEST_EXIT
