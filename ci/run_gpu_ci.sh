@@ -9,7 +9,7 @@ PRIMARY_GPU_COUNT="${RUNPOD_GPU_COUNT:-2}"
 FALLBACK_GPU_ID="${RUNPOD_FALLBACK_GPU_ID:-NVIDIA A40}"
 FALLBACK_GPU_COUNT="${RUNPOD_FALLBACK_GPU_COUNT:-1}"
 
-DEFAULT_CI_IMAGE="runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04"
+DEFAULT_CI_IMAGE="runpod/pytorch:0.7.2-dev-cu1241-torch241-ubuntu2204"
 if [ -n "${GITHUB_REPOSITORY:-}" ] && [ "${RUNPOD_USE_GHCR_IMAGE:-1}" = "1" ]; then
   DEFAULT_CI_IMAGE="ghcr.io/${GITHUB_REPOSITORY,,}/rl-kernel-ci:cuda"
 fi
@@ -25,6 +25,8 @@ POD_NAME="rl-kernel-ci-${PR_SHA_FOR_POD:0:7}-${PROFILE_SLUG}"
 READY_RETRIES="${RUNPOD_READY_RETRIES:-60}"
 PYTEST_ARGS="${PYTEST_ARGS:-tests/ rl_engine/tests/ -v}"
 FLASHINFER_WHEEL_INDEX="${FLASHINFER_WHEEL_INDEX:-https://flashinfer.ai/whl/cu124/torch2.4/index.html}"
+RUNPOD_MIN_CUDA_VERSION="${RUNPOD_MIN_CUDA_VERSION:-12.4}"
+RUNPOD_TERMINATE_AFTER="${RUNPOD_TERMINATE_AFTER:-2h}"
 
 POD_ID=""
 
@@ -37,7 +39,10 @@ cleanup() {
     echo "[ci] === AUTOMATIC CLEANUP: Removing pod $POD_ID ==="
     echo "[ci] ========================================================"
 
-    REMOVE_OUT=$(runpodctl pod remove "$POD_ID" 2>&1)
+    REMOVE_OUT=$(runpodctl pod remove "$POD_ID" 2>&1 || true)
+    if echo "$REMOVE_OUT" | grep -qiE "unknown command|unknown subcommand"; then
+      REMOVE_OUT=$(runpodctl pod delete "$POD_ID" 2>&1 || true)
+    fi
     if echo "$REMOVE_OUT" | grep -qi "not found"; then
       echo "[ci] Pod $POD_ID was already cleared from the cloud. Safe to exit."
     else
@@ -58,6 +63,8 @@ CREATE_OUT=$(runpodctl pod create \
   --image "$CI_IMAGE" \
   --container-disk-in-gb "$DISK_GB" \
   --cloud-type SECURE \
+  --min-cuda-version "$RUNPOD_MIN_CUDA_VERSION" \
+  --terminate-after "$RUNPOD_TERMINATE_AFTER" \
   --ports "22/tcp" 2>&1)
 
 # Fallback 触发
@@ -75,6 +82,8 @@ if echo "$CREATE_OUT" | grep -qi "no longer any instances available"; then
     --image "$CI_IMAGE" \
     --container-disk-in-gb "$DISK_GB" \
     --cloud-type SECURE \
+    --min-cuda-version "$RUNPOD_MIN_CUDA_VERSION" \
+    --terminate-after "$RUNPOD_TERMINATE_AFTER" \
     --ports "22/tcp" 2>&1)
 
   if echo "$CREATE_OUT" | grep -qi "no longer any instances available"; then
@@ -159,6 +168,39 @@ git checkout --detach "$PR_SHA"
 "$PY" -m pip install flashinfer-python -f "$FLASHINFER_WHEEL_INDEX"
 "$PY" -m pip install -e ".[cuda,test,hf]"
 nvidia-smi
+"$PY" - <<'PY'
+import sys
+
+import torch
+
+from rl_engine.kernels.registry import kernel_registry
+
+if not torch.cuda.is_available():
+    raise SystemExit("[remote] CUDA is unavailable after installation")
+
+print(
+    f"[remote] python={sys.version.split()[0]} "
+    f"torch={torch.__version__} torch_cuda={torch.version.cuda}"
+)
+op = kernel_registry.get_op("logp")
+backend = op.__class__.__name__
+print(f"[remote] strict logp backend={backend}")
+if not backend.startswith("FusedLogp"):
+    raise SystemExit(
+        "[remote] strict fused logp preflight failed: "
+        f"dispatch selected {backend}, not a FusedLogp backend"
+    )
+PY
+"$PY" examples/grpo_single_gpu.py \
+  --device cuda \
+  --require-fused-logp \
+  --steps 2 \
+  --num-prompts 1 \
+  --samples-per-prompt 2 \
+  --prompt-len 2 \
+  --completion-len 3 \
+  --vocab-size 16 \
+  --hidden-dim 8
 
 if [ "$GPU_COUNT" -gt 1 ]; then
   cat >/tmp/rl_kernel_nccl_smoke.py <<'PY'
