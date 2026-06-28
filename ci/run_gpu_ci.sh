@@ -149,7 +149,7 @@ if [ -n "$RUNPOD_SSH_KEY_PATH" ]; then
 fi
 
 printf -v REMOTE_ENV \
-  "GPU_COUNT=%q PR_REPO_URL=%q PR_SHA=%q TORCH_CUDA_ARCH_LIST=%q FORCE_CUDA=%q MAX_JOBS=%q KERNEL_ALIGN_FORCE_SM90=%q PYTEST_ARGS=%q FLASHINFER_WHEEL_INDEX=%q RUNPOD_UPGRADE_BUILD_TOOLS=%q" \
+  "GPU_COUNT=%q PR_REPO_URL=%q PR_SHA=%q TORCH_CUDA_ARCH_LIST=%q FORCE_CUDA=%q MAX_JOBS=%q KERNEL_ALIGN_FORCE_SM90=%q PYTEST_ARGS=%q FLASHINFER_WHEEL_INDEX=%q RUNPOD_UPGRADE_BUILD_TOOLS=%q RUNPOD_INSTALL_FLASHINFER=%q" \
   "$GPU_COUNT" \
   "${PR_REPO_URL:-https://github.com/RL-Align/RL-Kernel.git}" \
   "$PR_SHA" \
@@ -159,7 +159,8 @@ printf -v REMOTE_ENV \
   "${KERNEL_ALIGN_FORCE_SM90:-0}" \
   "$PYTEST_ARGS" \
   "$FLASHINFER_WHEEL_INDEX" \
-  "${RUNPOD_UPGRADE_BUILD_TOOLS:-0}"
+  "${RUNPOD_UPGRADE_BUILD_TOOLS:-0}" \
+  "${RUNPOD_INSTALL_FLASHINFER:-0}"
 
 echo "[ci] Launching remote test suite on GPU pod (TP=${GPU_COUNT})..."
 ssh $SSH_OPTIONS root@"$SSH_IP" "$REMOTE_ENV bash -s" <<'REMOTE'
@@ -190,8 +191,13 @@ else
   "$PY" -m pip --version
   "$PY" -m pip show setuptools wheel >/dev/null 2>&1 || true
 fi
-"$PY" -m pip install "${PIP_INSTALL_ARGS[@]}" flashinfer-python -f "$FLASHINFER_WHEEL_INDEX"
-"$PY" -m pip install "${PIP_INSTALL_ARGS[@]}" -e ".[cuda,test,hf]"
+if [ "${RUNPOD_INSTALL_FLASHINFER:-0}" = "1" ]; then
+  "$PY" -m pip install "${PIP_INSTALL_ARGS[@]}" flashinfer-python -f "$FLASHINFER_WHEEL_INDEX"
+  "$PY" -m pip install "${PIP_INSTALL_ARGS[@]}" -e ".[cuda,test,hf]"
+else
+  "$PY" -m pip install "${PIP_INSTALL_ARGS[@]}" nvidia-ml-py
+  "$PY" -m pip install "${PIP_INSTALL_ARGS[@]}" -e ".[test,hf]"
+fi
 "$PY" setup.py build_ext --inplace
 nvidia-smi
 "$PY" - <<'PY'
