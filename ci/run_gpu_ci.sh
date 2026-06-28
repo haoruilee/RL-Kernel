@@ -136,7 +136,17 @@ done
 
 echo "[ci] Target Establish -> root@$SSH_IP:$SSH_PORT"
 
+RUNPOD_SSH_KEY_PATH="${RUNPOD_SSH_KEY_PATH:-}"
+if [ -z "$RUNPOD_SSH_KEY_PATH" ] && [ -f "$HOME/.runpod/ssh/runpodctl-ssh-key" ]; then
+  RUNPOD_SSH_KEY_PATH="$HOME/.runpod/ssh/runpodctl-ssh-key"
+elif [ -z "$RUNPOD_SSH_KEY_PATH" ] && [ -f "$HOME/.ssh/id_ed25519" ]; then
+  RUNPOD_SSH_KEY_PATH="$HOME/.ssh/id_ed25519"
+fi
+
 SSH_OPTIONS="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -p $SSH_PORT"
+if [ -n "$RUNPOD_SSH_KEY_PATH" ]; then
+  SSH_OPTIONS="$SSH_OPTIONS -o IdentitiesOnly=yes -i $RUNPOD_SSH_KEY_PATH"
+fi
 
 printf -v REMOTE_ENV \
   "GPU_COUNT=%q PR_REPO_URL=%q PR_SHA=%q TORCH_CUDA_ARCH_LIST=%q FORCE_CUDA=%q MAX_JOBS=%q KERNEL_ALIGN_FORCE_SM90=%q PYTEST_ARGS=%q FLASHINFER_WHEEL_INDEX=%q" \
