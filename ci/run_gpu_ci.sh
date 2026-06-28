@@ -149,7 +149,7 @@ if [ -n "$RUNPOD_SSH_KEY_PATH" ]; then
 fi
 
 printf -v REMOTE_ENV \
-  "GPU_COUNT=%q PR_REPO_URL=%q PR_SHA=%q TORCH_CUDA_ARCH_LIST=%q FORCE_CUDA=%q MAX_JOBS=%q KERNEL_ALIGN_FORCE_SM90=%q PYTEST_ARGS=%q FLASHINFER_WHEEL_INDEX=%q" \
+  "GPU_COUNT=%q PR_REPO_URL=%q PR_SHA=%q TORCH_CUDA_ARCH_LIST=%q FORCE_CUDA=%q MAX_JOBS=%q KERNEL_ALIGN_FORCE_SM90=%q PYTEST_ARGS=%q FLASHINFER_WHEEL_INDEX=%q RUNPOD_UPGRADE_BUILD_TOOLS=%q" \
   "$GPU_COUNT" \
   "${PR_REPO_URL:-https://github.com/RL-Align/RL-Kernel.git}" \
   "$PR_SHA" \
@@ -158,7 +158,8 @@ printf -v REMOTE_ENV \
   "${MAX_JOBS:-8}" \
   "${KERNEL_ALIGN_FORCE_SM90:-0}" \
   "$PYTEST_ARGS" \
-  "$FLASHINFER_WHEEL_INDEX"
+  "$FLASHINFER_WHEEL_INDEX" \
+  "${RUNPOD_UPGRADE_BUILD_TOOLS:-0}"
 
 echo "[ci] Launching remote test suite on GPU pod (TP=${GPU_COUNT})..."
 ssh $SSH_OPTIONS root@"$SSH_IP" "$REMOTE_ENV bash -s" <<'REMOTE'
@@ -176,15 +177,21 @@ export TORCH_CUDA_ARCH_LIST
 export FORCE_CUDA
 export MAX_JOBS
 export KERNEL_ALIGN_FORCE_SM90
+PIP_INSTALL_ARGS=(--timeout 60 --retries 10 --resume-retries 5)
 mkdir -p /workspace
 cd /workspace
 git clone "$PR_REPO_URL" repo
 cd repo
 git fetch origin "$PR_SHA"
 git checkout --detach "$PR_SHA"
-"$PY" -m pip install -U pip setuptools wheel
-"$PY" -m pip install flashinfer-python -f "$FLASHINFER_WHEEL_INDEX"
-"$PY" -m pip install -e ".[cuda,test,hf]"
+if [ "${RUNPOD_UPGRADE_BUILD_TOOLS:-0}" = "1" ]; then
+  "$PY" -m pip install "${PIP_INSTALL_ARGS[@]}" -U pip setuptools wheel
+else
+  "$PY" -m pip --version
+  "$PY" -m pip show setuptools wheel >/dev/null 2>&1 || true
+fi
+"$PY" -m pip install "${PIP_INSTALL_ARGS[@]}" flashinfer-python -f "$FLASHINFER_WHEEL_INDEX"
+"$PY" -m pip install "${PIP_INSTALL_ARGS[@]}" -e ".[cuda,test,hf]"
 nvidia-smi
 "$PY" - <<'PY'
 import sys
