@@ -23,6 +23,7 @@ fi
 PROFILE_SLUG=$(printf "%s" "${RUNPOD_PROFILE_NAME:-gpu}" | tr -c "[:alnum:]-" "-")
 POD_NAME="rl-kernel-ci-${PR_SHA_FOR_POD:0:7}-${PROFILE_SLUG}"
 READY_RETRIES="${RUNPOD_READY_RETRIES:-60}"
+SSH_READY_RETRIES="${RUNPOD_SSH_READY_RETRIES:-30}"
 PYTEST_ARGS="${PYTEST_ARGS:-tests/ rl_engine/tests/ -v}"
 FLASHINFER_WHEEL_INDEX="${FLASHINFER_WHEEL_INDEX:-https://flashinfer.ai/whl/cu124/torch2.4/index.html}"
 RUNPOD_MIN_CUDA_VERSION="${RUNPOD_MIN_CUDA_VERSION:-12.4}"
@@ -147,6 +148,22 @@ SSH_OPTIONS="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogL
 if [ -n "$RUNPOD_SSH_KEY_PATH" ]; then
   SSH_OPTIONS="$SSH_OPTIONS -o IdentitiesOnly=yes -i $RUNPOD_SSH_KEY_PATH"
 fi
+
+echo "[ci] Verifying SSH daemon readiness..."
+for i in $(seq 1 "$SSH_READY_RETRIES"); do
+  if ssh $SSH_OPTIONS root@"$SSH_IP" true >/dev/null 2>&1; then
+    echo "[ci] SSH daemon is ready."
+    break
+  fi
+
+  if [ "$i" -eq "$SSH_READY_RETRIES" ]; then
+    echo "[ci] ERROR: SSH daemon did not become ready."
+    exit 1
+  fi
+
+  echo "[ci] SSH daemon is not ready yet... waiting 10s (Attempt $i/$SSH_READY_RETRIES)"
+  sleep 10
+done
 
 printf -v REMOTE_ENV \
   "GPU_COUNT=%q PR_REPO_URL=%q PR_SHA=%q TORCH_CUDA_ARCH_LIST=%q FORCE_CUDA=%q MAX_JOBS=%q KERNEL_ALIGN_FORCE_SM90=%q PYTEST_ARGS=%q FLASHINFER_WHEEL_INDEX=%q RUNPOD_UPGRADE_BUILD_TOOLS=%q RUNPOD_INSTALL_FLASHINFER=%q" \
