@@ -47,8 +47,8 @@ __global__ void fused_logp_online_tma_kernel(
             if (step > 0) mbarrier_wait(mma_mbar_addr, phase ^ 1);
 
             if (lane_id == 0) {
-                tma_2d_g2s(smem_addr, &logits_tmap, col_offset, row_idx, tma_mbar_addr);
                 mbarrier_arrive_expect_tx(tma_mbar_addr, current_tile_size * sizeof(nv_bfloat16));
+                tma_2d_g2s(smem_addr, &logits_tmap, col_offset, row_idx, tma_mbar_addr);
             }
             phase ^= 1;
         }
