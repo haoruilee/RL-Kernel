@@ -67,8 +67,22 @@ def test_sm90_logp_uses_tma_for_bf16_contiguous(monkeypatch):
 
     logits = torch.randn(2, 3, 17, dtype=torch.bfloat16).contiguous()
     token_ids = torch.randint(0, logits.size(-1), (2, 3))
+    op = logp_module.FusedLogpSM90Op()
 
-    result = logp_module.FusedLogpSM90Op()(logits, token_ids)
+    for method_name in (
+        "apply",
+        "out",
+        "apply_fp32",
+        "indexed_out",
+        "indexed_fp32",
+        "online_out",
+        "online_fp32",
+        "online_indexed_out",
+        "online_indexed_fp32",
+    ):
+        assert callable(getattr(op, method_name))
+
+    result = op(logits, token_ids)
 
     assert calls == {"sm90": 1, "generic": 0}
     assert result.shape == logits.shape[:-1]

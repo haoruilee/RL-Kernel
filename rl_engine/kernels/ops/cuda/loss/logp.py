@@ -29,6 +29,9 @@ class FusedLogpSM90Op:
         return logits.dtype == torch.bfloat16 and logits.is_contiguous()
 
     def __call__(self, logits: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
+        return self.apply(logits, labels)
+
+    def apply(self, logits: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
         if not self._can_use_tma(logits):
             return self._generic().apply_fp32(logits, labels)
         labels_fused = labels.to(device=logits.device, dtype=torch.int32).contiguous()
@@ -38,6 +41,47 @@ class FusedLogpSM90Op:
         if self._can_use_tma(logits):
             return self(logits, labels).float()
         return self._generic().apply_fp32(logits, labels)
+
+    def out(
+        self, logits: torch.Tensor, token_ids: torch.Tensor, output: torch.Tensor
+    ) -> torch.Tensor:
+        return self._generic().out(logits, token_ids, output)
+
+    def indexed_out(
+        self,
+        logits: torch.Tensor,
+        token_ids: torch.Tensor,
+        row_indices: torch.Tensor,
+        output: torch.Tensor,
+    ) -> torch.Tensor:
+        return self._generic().indexed_out(logits, token_ids, row_indices, output)
+
+    def indexed_fp32(
+        self, logits: torch.Tensor, token_ids: torch.Tensor, row_indices: torch.Tensor
+    ) -> torch.Tensor:
+        return self._generic().indexed_fp32(logits, token_ids, row_indices)
+
+    def online_out(
+        self, logits: torch.Tensor, token_ids: torch.Tensor, output: torch.Tensor
+    ) -> torch.Tensor:
+        return self._generic().online_out(logits, token_ids, output)
+
+    def online_fp32(self, logits: torch.Tensor, token_ids: torch.Tensor) -> torch.Tensor:
+        return self._generic().online_fp32(logits, token_ids)
+
+    def online_indexed_out(
+        self,
+        logits: torch.Tensor,
+        token_ids: torch.Tensor,
+        row_indices: torch.Tensor,
+        output: torch.Tensor,
+    ) -> torch.Tensor:
+        return self._generic().online_indexed_out(logits, token_ids, row_indices, output)
+
+    def online_indexed_fp32(
+        self, logits: torch.Tensor, token_ids: torch.Tensor, row_indices: torch.Tensor
+    ) -> torch.Tensor:
+        return self._generic().online_indexed_fp32(logits, token_ids, row_indices)
 
 
 class FusedLogpGenericOp:
