@@ -78,7 +78,7 @@ __device__ inline void mbarrier_wait(int mbar_addr, int phase) {
 
 __device__ inline void tma_2d_g2s(uint32_t dst_smem_addr, uint64_t tmap_addr, int x, int y,
                                   uint32_t mbar_addr) {
-    asm volatile("cp.async.bulk.tensor.2d.shared::cta.global.mbarrier::complete_tx::bytes "
+    asm volatile("cp.async.bulk.tensor.2d.shared::cta.global.mbarrier::complete_tx::bytes.tile "
                  "[%0], [%1, {%3, %4}], [%2];"
                  :: "r"(dst_smem_addr), "l"(tmap_addr), "r"(mbar_addr), "r"(x), "r"(y)
                  : "memory");
