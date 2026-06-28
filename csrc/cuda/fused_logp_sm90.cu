@@ -25,12 +25,14 @@ __global__ void fused_logp_online_tma_kernel(
     const int row_idx = blockIdx.x;
 
     extern __shared__ __align__(1024) char smem[];
-    const int smem_addr = static_cast<int>(__cvta_generic_to_shared(smem));
-    const uint64_t logits_tmap_addr = __cvta_generic_to_global(logits_tmap);
     nv_bfloat16* smem_logits = reinterpret_cast<nv_bfloat16*>(smem);
+    int* tma_mbar = reinterpret_cast<int*>(smem + TILE_V * sizeof(nv_bfloat16));
+    int* mma_mbar = tma_mbar + 2;
+    const uint32_t smem_addr = static_cast<uint32_t>(__cvta_generic_to_shared(smem_logits));
+    const uint64_t logits_tmap_addr = __cvta_generic_to_global(logits_tmap);
 
-    const int tma_mbar_addr = smem_addr + (TILE_V * sizeof(nv_bfloat16));
-    const int mma_mbar_addr = tma_mbar_addr + 8;
+    const uint32_t tma_mbar_addr = static_cast<uint32_t>(__cvta_generic_to_shared(tma_mbar));
+    const uint32_t mma_mbar_addr = static_cast<uint32_t>(__cvta_generic_to_shared(mma_mbar));
 
     if (warp_id == 0 && lane_id == 0) {
         mbarrier_init(tma_mbar_addr, 1);

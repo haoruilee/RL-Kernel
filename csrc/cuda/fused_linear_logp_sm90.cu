@@ -90,10 +90,9 @@ __global__ void fused_linear_logp_sm90_kernel(const CUtensorMap *__restrict__ h_
     const uint32_t sW_base = static_cast<uint32_t>(__cvta_generic_to_shared(sW));
     const uint64_t h_tmap_addr = __cvta_generic_to_global(h_tmap);
     const uint64_t w_tmap_addr = __cvta_generic_to_global(w_tmap);
-    int mbar[STAGES];
-#pragma unroll
-    for (int s = 0; s < STAGES; ++s)
-        mbar[s] = static_cast<int>(__cvta_generic_to_shared(mbar_base + 2 * s));
+    auto mbar_addr = [&](int buf) {
+        return static_cast<uint32_t>(__cvta_generic_to_shared(mbar_base + 2 * buf));
+    };
 
     for (int r = tid; r < num_rows; r += WG_THREADS) {
         sMax[r] = -CUDART_INF_F;
@@ -103,7 +102,7 @@ __global__ void fused_linear_logp_sm90_kernel(const CUtensorMap *__restrict__ h_
     if (tid == 0) {
 #pragma unroll
         for (int s = 0; s < STAGES; ++s)
-            mbarrier_init(mbar[s], 1);
+            mbarrier_init(mbar_addr(s), 1);
         asm volatile("prefetch.tensormap [%0];" :: "l"(h_tmap_addr) : "memory");
         asm volatile("prefetch.tensormap [%0];" :: "l"(w_tmap_addr) : "memory");
         asm volatile("fence.mbarrier_init.release.cluster;");
@@ -116,11 +115,14 @@ __global__ void fused_linear_logp_sm90_kernel(const CUtensorMap *__restrict__ h_
     auto issue_load = [&](int k, int col_base) {
         const int buf = k % STAGES;
         const int k_off = k * BK;
-        mbarrier_arrive_expect_tx(mbar[buf], tile_bytes);
-        tma_2d_g2s(sH_base + buf * BM * BK * sizeof(nv_bfloat16), h_tmap_addr, k_off,
-                   row_base, mbar[buf]);
-        tma_2d_g2s(sW_base + buf * BN * BK * sizeof(nv_bfloat16), w_tmap_addr, k_off,
-                   col_base, mbar[buf]);
+        const uint32_t bar = mbar_addr(buf);
+        const uint32_t h_dst =
+            static_cast<uint32_t>(__cvta_generic_to_shared(sH + buf * BM * BK));
+        const uint32_t w_dst =
+            static_cast<uint32_t>(__cvta_generic_to_shared(sW + buf * BN * BK));
+        mbarrier_arrive_expect_tx(bar, tile_bytes);
+        tma_2d_g2s(h_dst, h_tmap_addr, k_off, row_base, bar);
+        tma_2d_g2s(w_dst, w_tmap_addr, k_off, col_base, bar);
     };
 
     int phase[STAGES];
@@ -151,7 +153,7 @@ __global__ void fused_linear_logp_sm90_kernel(const CUtensorMap *__restrict__ h_
             const int buf = k % STAGES;
             if (tid == 0 && k + (STAGES - 1) < kd)
                 issue_load(k + (STAGES - 1), col_base); // overlaps with the MMAs below
-            mbarrier_wait(mbar[buf], phase[buf]);
+            mbarrier_wait(mbar_addr(buf), phase[buf]);
             phase[buf] ^= 1;
             __syncthreads();
 
