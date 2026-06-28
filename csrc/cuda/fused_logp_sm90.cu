@@ -4,11 +4,13 @@
 #include "../utils/tma_utils.cuh"
 #include <ATen/cuda/CUDAContext.h>
 #include <c10/cuda/CUDAException.h>
+#include <cuda/barrier>
 #include <math_constants.h>
 #include <torch/extension.h>
 #include <cub/cub.cuh>
 
 #define TILE_V 4096
+using CtaBarrier = cuda::barrier<cuda::thread_scope_block>;
 
 template<int NUM_WARPS>
 __global__ void fused_logp_online_tma_kernel(
@@ -26,17 +28,17 @@ __global__ void fused_logp_online_tma_kernel(
 
     extern __shared__ __align__(1024) char smem[];
     nv_bfloat16* smem_logits = reinterpret_cast<nv_bfloat16*>(smem);
-    int* tma_mbar = reinterpret_cast<int*>(smem + TILE_V * sizeof(nv_bfloat16));
-    int* mma_mbar = tma_mbar + 2;
+    __shared__ CtaBarrier tma_mbar;
+    __shared__ CtaBarrier mma_mbar;
     const uint32_t smem_addr = static_cast<uint32_t>(__cvta_generic_to_shared(smem_logits));
     const uint64_t logits_tmap_addr = __cvta_generic_to_global(logits_tmap);
 
-    const uint32_t tma_mbar_addr = static_cast<uint32_t>(__cvta_generic_to_shared(tma_mbar));
-    const uint32_t mma_mbar_addr = static_cast<uint32_t>(__cvta_generic_to_shared(mma_mbar));
+    const uint32_t tma_mbar_addr = static_cast<uint32_t>(__cvta_generic_to_shared(&tma_mbar));
+    const uint32_t mma_mbar_addr = static_cast<uint32_t>(__cvta_generic_to_shared(&mma_mbar));
 
     if (warp_id == 0 && lane_id == 0) {
-        mbarrier_init(tma_mbar_addr, 1);
-        mbarrier_init(mma_mbar_addr, (NUM_WARPS - 1) * 32);
+        init(&tma_mbar, 1);
+        init(&mma_mbar, (NUM_WARPS - 1) * 32);
         asm volatile("prefetch.tensormap [%0];" :: "l"(logits_tmap_addr) : "memory");
         asm volatile("fence.mbarrier_init.release.cluster;");
     }
@@ -123,7 +125,7 @@ torch::Tensor fused_logp_sm90_forward(torch::Tensor logits, torch::Tensor labels
                     reinterpret_cast<const nv_bfloat16 *>(logits.data_ptr<at::BFloat16>()), B, V, 1,
                     TILE_V);
 
-    int smem_size = (TILE_V * sizeof(nv_bfloat16)) + 16;
+    int smem_size = TILE_V * sizeof(nv_bfloat16);
     CUtensorMap *logits_tmap_dev = nullptr;
     auto stream = at::cuda::getCurrentCUDAStream();
     C10_CUDA_CHECK(cudaMalloc(&logits_tmap_dev, sizeof(CUtensorMap)));
