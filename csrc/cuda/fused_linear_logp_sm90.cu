@@ -90,8 +90,8 @@ __global__ void fused_linear_logp_sm90_kernel(const CUtensorMap *__restrict__ h_
 
     const uint32_t sH_base = static_cast<uint32_t>(__cvta_generic_to_shared(sH));
     const uint32_t sW_base = static_cast<uint32_t>(__cvta_generic_to_shared(sW));
-    const uint64_t h_tmap_addr = __cvta_generic_to_global(h_tmap);
-    const uint64_t w_tmap_addr = __cvta_generic_to_global(w_tmap);
+    const uint64_t h_tmap_addr = cvta_to_global_u64(h_tmap);
+    const uint64_t w_tmap_addr = cvta_to_global_u64(w_tmap);
     auto mbar_addr = [&](int buf) {
         return static_cast<uint32_t>(__cvta_generic_to_shared(&mbar[buf]));
     };

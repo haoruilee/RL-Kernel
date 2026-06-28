@@ -31,7 +31,7 @@ __global__ void fused_logp_online_tma_kernel(
     __shared__ CtaBarrier tma_mbar;
     __shared__ CtaBarrier mma_mbar;
     const uint32_t smem_addr = static_cast<uint32_t>(__cvta_generic_to_shared(smem_logits));
-    const uint64_t logits_tmap_addr = __cvta_generic_to_global(logits_tmap);
+    const uint64_t logits_tmap_addr = cvta_to_global_u64(logits_tmap);
 
     const uint32_t tma_mbar_addr = static_cast<uint32_t>(__cvta_generic_to_shared(&tma_mbar));
     const uint32_t mma_mbar_addr = static_cast<uint32_t>(__cvta_generic_to_shared(&mma_mbar));
