@@ -31,6 +31,15 @@ def _cuda_define_from_env(name: str, macro: str) -> list[str]:
     return [f"-D{macro}={parsed}"]
 
 
+def _sm90_arch_from_env_or_device(cc_major: int, cc_minor: int) -> str:
+    override = os.environ.get("KERNEL_ALIGN_SM90_ARCH")
+    if override:
+        return override.strip().lower().removeprefix("sm_").removeprefix("compute_").replace(".", "")
+    if cc_major == 9:
+        return f"{cc_major}{cc_minor}a"
+    return "90a"
+
+
 def get_extensions():
     torch, _, CUDAExtension, ROCMExtension = _load_torch_extension_tools()
     if torch is None:
@@ -117,7 +126,9 @@ def get_extensions():
         enable_sm90 = os.environ.get("KERNEL_ALIGN_FORCE_SM90") == "1"
         present_sm90 = [s for s in sm90_srcs if os.path.exists(s)]
         if enable_sm90 and present_sm90:
-            tma_arch = f"{cc_major}{cc_minor}a"  # WGMMA/TMA require the arch-native 'a' variant
+            # WGMMA/TMA require an arch-native 'a' target.  Keep forced SM90
+            # builds probeable from non-Hopper CUDA hosts by defaulting to 90a.
+            tma_arch = _sm90_arch_from_env_or_device(cc_major, cc_minor)
             cuda_sources.extend(present_sm90)
             nvcc_flags.append(f"-gencode=arch=compute_{tma_arch},code=sm_{tma_arch}")
             cxx_flags.append("-DKERNEL_ALIGN_WITH_SM90")

@@ -4,17 +4,15 @@
 #include "../utils/tma_utils.cuh"
 #include <ATen/cuda/CUDAContext.h>
 #include <c10/cuda/CUDAException.h>
-#include <cuda/barrier>
 #include <math_constants.h>
 #include <torch/extension.h>
 #include <cub/cub.cuh>
 
 #define TILE_V 4096
-using CtaBarrier = cuda::barrier<cuda::thread_scope_block>;
 
 template<int NUM_WARPS>
 __global__ void fused_logp_online_tma_kernel(
-    const CUtensorMap* __restrict__ logits_tmap,
+    const __grid_constant__ CUtensorMap logits_tmap,
     const int* __restrict__ labels,
     const nv_bfloat16* __restrict__ logits_gmem,
     float* __restrict__ output_logp,
@@ -28,18 +26,18 @@ __global__ void fused_logp_online_tma_kernel(
 
     extern __shared__ __align__(1024) char smem[];
     nv_bfloat16* smem_logits = reinterpret_cast<nv_bfloat16*>(smem);
-    __shared__ CtaBarrier tma_mbar;
-    __shared__ CtaBarrier mma_mbar;
+    __shared__ __align__(8) uint64_t tma_mbar;
+    __shared__ __align__(8) uint64_t mma_mbar;
     const uint32_t smem_addr = static_cast<uint32_t>(__cvta_generic_to_shared(smem_logits));
-    const uint64_t logits_tmap_addr = cvta_to_global_u64(logits_tmap);
+    const CUtensorMap* logits_tmap_ptr = &logits_tmap;
 
     const uint32_t tma_mbar_addr = static_cast<uint32_t>(__cvta_generic_to_shared(&tma_mbar));
     const uint32_t mma_mbar_addr = static_cast<uint32_t>(__cvta_generic_to_shared(&mma_mbar));
 
     if (warp_id == 0 && lane_id == 0) {
-        init(&tma_mbar, 1);
-        init(&mma_mbar, (NUM_WARPS - 1) * 32);
-        asm volatile("prefetch.tensormap [%0];" :: "l"(logits_tmap_addr) : "memory");
+        mbarrier_init(tma_mbar_addr, 1);
+        mbarrier_init(mma_mbar_addr, (NUM_WARPS - 1) * 32);
+        prefetch_tensormap(logits_tmap_ptr);
         asm volatile("fence.mbarrier_init.release.cluster;");
     }
     __syncthreads();
@@ -50,13 +48,12 @@ __global__ void fused_logp_online_tma_kernel(
     if (warp_id == 0) {
         for (int step = 0; step < num_tiles; ++step) {
             int col_offset = step * TILE_V;
-            int current_tile_size = min(TILE_V, vocab_size - col_offset);
 
             if (step > 0) mbarrier_wait(mma_mbar_addr, phase ^ 1);
 
             if (lane_id == 0) {
-                mbarrier_arrive_expect_tx(tma_mbar_addr, current_tile_size * sizeof(nv_bfloat16));
-                tma_2d_g2s(smem_addr, logits_tmap_addr, col_offset, row_idx, tma_mbar_addr);
+                mbarrier_arrive_expect_tx(tma_mbar_addr, TILE_V * sizeof(nv_bfloat16));
+                tma_2d_g2s(smem_addr, logits_tmap_ptr, col_offset, row_idx, tma_mbar_addr);
             }
             phase ^= 1;
         }
@@ -126,19 +123,14 @@ torch::Tensor fused_logp_sm90_forward(torch::Tensor logits, torch::Tensor labels
                     TILE_V);
 
     int smem_size = TILE_V * sizeof(nv_bfloat16);
-    CUtensorMap *logits_tmap_dev = nullptr;
     auto stream = at::cuda::getCurrentCUDAStream();
-    C10_CUDA_CHECK(cudaMalloc(&logits_tmap_dev, sizeof(CUtensorMap)));
-    C10_CUDA_CHECK(cudaMemcpyAsync(logits_tmap_dev, &logits_tmap, sizeof(CUtensorMap),
-                                   cudaMemcpyHostToDevice, stream));
 
     fused_logp_online_tma_kernel<4><<<B, 128, smem_size, stream>>>(
-        logits_tmap_dev, labels.data_ptr<int>(),
+        logits_tmap, labels.data_ptr<int>(),
         reinterpret_cast<const nv_bfloat16*>(logits.data_ptr<at::BFloat16>()),
         output.data_ptr<float>(), B, V
     );
     C10_CUDA_KERNEL_LAUNCH_CHECK();
     C10_CUDA_CHECK(cudaStreamSynchronize(stream));
-    C10_CUDA_CHECK(cudaFree(logits_tmap_dev));
     return output;
 }

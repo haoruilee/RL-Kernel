@@ -8,7 +8,6 @@
 #include <ATen/cuda/CUDAContext.h>
 #include <c10/cuda/CUDAException.h>
 #include <algorithm>
-#include <cuda/barrier>
 #include <cuda_bf16.h>
 #include <math_constants.h>
 #include <torch/extension.h>
@@ -31,7 +30,6 @@ constexpr int M_TILES = WARP_M / MMA_M;  // MMA m-tiles each warp owns
 constexpr int N_TILES = BN / MMA_N;      // 8 n-tiles per warp
 constexpr int K_TILES = BK / MMA_K;      // MMA k-steps per TMA tile
 constexpr int KK_GROUPS = BK / 32;       // 32-wide ldmatrix.x4 groups (2 k-steps each)
-using CtaBarrier = cuda::barrier<cuda::thread_scope_block>;
 
 static_assert(WARP_M % MMA_M == 0, "rows per warp must be a multiple of MMA_M");
 static_assert(BK % 32 == 0, "BK must be a multiple of 32 (ldmatrix.x4 spans 32 cols)");
@@ -55,8 +53,8 @@ __device__ __forceinline__ void mma_m16n8k16(const uint32_t A[4], const uint32_t
 }
 
 
-__global__ void fused_linear_logp_sm90_kernel(const CUtensorMap *__restrict__ h_tmap,
-                                              const CUtensorMap *__restrict__ w_tmap,
+__global__ void fused_linear_logp_sm90_kernel(const __grid_constant__ CUtensorMap h_tmap,
+                                              const __grid_constant__ CUtensorMap w_tmap,
                                               const int *__restrict__ target,
                                               const float *__restrict__ bias, // may be null
                                               float *__restrict__ part_max,   // [n_split, N]
@@ -86,12 +84,12 @@ __global__ void fused_linear_logp_sm90_kernel(const CUtensorMap *__restrict__ h_
     float *sMax = sLogits + BM * BN;
     float *sSum = sMax + BM;
     float *sZt = sSum + BM;
-    __shared__ CtaBarrier mbar[STAGES];
+    __shared__ __align__(8) uint64_t mbar[STAGES];
 
     const uint32_t sH_base = static_cast<uint32_t>(__cvta_generic_to_shared(sH));
     const uint32_t sW_base = static_cast<uint32_t>(__cvta_generic_to_shared(sW));
-    const uint64_t h_tmap_addr = cvta_to_global_u64(h_tmap);
-    const uint64_t w_tmap_addr = cvta_to_global_u64(w_tmap);
+    const CUtensorMap *h_tmap_ptr = &h_tmap;
+    const CUtensorMap *w_tmap_ptr = &w_tmap;
     auto mbar_addr = [&](int buf) {
         return static_cast<uint32_t>(__cvta_generic_to_shared(&mbar[buf]));
     };
@@ -104,9 +102,9 @@ __global__ void fused_linear_logp_sm90_kernel(const CUtensorMap *__restrict__ h_
     if (tid == 0) {
 #pragma unroll
         for (int s = 0; s < STAGES; ++s)
-            init(&mbar[s], 1);
-        asm volatile("prefetch.tensormap [%0];" :: "l"(h_tmap_addr) : "memory");
-        asm volatile("prefetch.tensormap [%0];" :: "l"(w_tmap_addr) : "memory");
+            mbarrier_init(mbar_addr(s), 1);
+        prefetch_tensormap(h_tmap_ptr);
+        prefetch_tensormap(w_tmap_ptr);
         asm volatile("fence.mbarrier_init.release.cluster;");
     }
     __syncthreads();
@@ -123,8 +121,8 @@ __global__ void fused_linear_logp_sm90_kernel(const CUtensorMap *__restrict__ h_
         const uint32_t w_dst =
             static_cast<uint32_t>(__cvta_generic_to_shared(sW + buf * BN * BK));
         mbarrier_arrive_expect_tx(bar, tile_bytes);
-        tma_2d_g2s(h_dst, h_tmap_addr, k_off, row_base, bar);
-        tma_2d_g2s(w_dst, w_tmap_addr, k_off, col_base, bar);
+        tma_2d_g2s(h_dst, h_tmap_ptr, k_off, row_base, bar);
+        tma_2d_g2s(w_dst, w_tmap_ptr, k_off, col_base, bar);
     };
 
     int phase[STAGES];
@@ -372,19 +370,11 @@ std::vector<torch::Tensor> fused_linear_logp_sm90_forward(torch::Tensor hidden,
                              cudaFuncAttributeMaxDynamicSharedMemorySize, smem);
     }
 
-    CUtensorMap *h_tmap_dev = nullptr;
-    CUtensorMap *w_tmap_dev = nullptr;
     auto stream = at::cuda::getCurrentCUDAStream();
-    C10_CUDA_CHECK(cudaMalloc(&h_tmap_dev, sizeof(CUtensorMap)));
-    C10_CUDA_CHECK(cudaMalloc(&w_tmap_dev, sizeof(CUtensorMap)));
-    C10_CUDA_CHECK(cudaMemcpyAsync(h_tmap_dev, &h_tmap, sizeof(CUtensorMap), cudaMemcpyHostToDevice,
-                                   stream));
-    C10_CUDA_CHECK(cudaMemcpyAsync(w_tmap_dev, &w_tmap, sizeof(CUtensorMap), cudaMemcpyHostToDevice,
-                                   stream));
 
     dim3 grid(row_blocks, n_split);
     fused_linear_logp_sm90_kernel<<<grid, WG_THREADS, smem, stream>>>(
-        h_tmap_dev, w_tmap_dev, target_i.data_ptr<int>(), bias_ptr, part_max.data_ptr<float>(),
+        h_tmap, w_tmap, target_i.data_ptr<int>(), bias_ptr, part_max.data_ptr<float>(),
         part_sum.data_ptr<float>(), part_zt.data_ptr<float>(), N, D, V, n_split);
 
     const int combine_threads = 256;
@@ -394,8 +384,6 @@ std::vector<torch::Tensor> fused_linear_logp_sm90_forward(torch::Tensor hidden,
         logp.data_ptr<float>(), lse.data_ptr<float>(), N, n_split);
     C10_CUDA_KERNEL_LAUNCH_CHECK();
     C10_CUDA_CHECK(cudaStreamSynchronize(stream));
-    C10_CUDA_CHECK(cudaFree(h_tmap_dev));
-    C10_CUDA_CHECK(cudaFree(w_tmap_dev));
 
     return {logp, lse};
 }

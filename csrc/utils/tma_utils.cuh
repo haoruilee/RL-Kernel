@@ -76,15 +76,22 @@ __device__ inline void mbarrier_wait(int mbar_addr, int phase) {
     );
 }
 
-__device__ inline uint64_t cvta_to_global_u64(const void *ptr) {
-    uint64_t addr;
-    asm volatile("cvta.to.global.u64 %0, %1;" : "=l"(addr) : "l"(ptr));
-    return addr;
+__device__ inline uint64_t tensormap_addr_u64(const CUtensorMap *tmap) {
+    return reinterpret_cast<uint64_t>(tmap);
 }
 
-__device__ inline void tma_2d_g2s(uint32_t dst_smem_addr, uint64_t tmap_addr, int x, int y,
+__device__ inline void prefetch_tensormap(const CUtensorMap *tmap) {
+    const uint64_t tmap_addr = tensormap_addr_u64(tmap);
+    asm volatile("prefetch.tensormap [%0];" :: "l"(tmap_addr) : "memory");
+}
+
+__device__ inline void tma_2d_g2s(uint32_t dst_smem_addr, const CUtensorMap *tmap, int x, int y,
                                   uint32_t mbar_addr) {
-    asm volatile("cp.async.bulk.tensor.2d.shared::cta.global.mbarrier::complete_tx::bytes.tile "
+    const uint64_t tmap_addr = tensormap_addr_u64(tmap);
+    // CUDA 12.4's PTX ISA rejects the SM90 `.shared::cta` tensor-copy form;
+    // CUTLASS targets Hopper TMA with `.shared::cluster`, which is valid for a
+    // single-CTA cluster and for local CTA shared memory.
+    asm volatile("cp.async.bulk.tensor.2d.shared::cluster.global.mbarrier::complete_tx::bytes.tile "
                  "[%0], [%1, {%3, %4}], [%2];"
                  :: "r"(dst_smem_addr), "l"(tmap_addr), "r"(mbar_addr), "r"(x), "r"(y)
                  : "memory");
