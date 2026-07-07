@@ -1,0 +1,97 @@
+===== host info =====
+2026-07-03T22:12:29+08:00
+Linux lanzhou 7.0.12+deb14.1-amd64 #1 SMP PREEMPT_DYNAMIC Debian 7.0.12-2 (2026-06-12) x86_64 GNU/Linux
+uid=1000(kori) gid=1000(kori) 组=1000(kori),24(cdrom),25(floppy),27(sudo),29(audio),30(dip),44(video),46(plugdev),101(netdev),102(scanner),108(bluetooth),110(lpadmin),984(docker),992(render)
+  Name:                    12th Gen Intel(R) Core(TM) i7-12800H
+  Marketing Name:          12th Gen Intel(R) Core(TM) i7-12800H
+  Vendor Name:             CPU                                
+  Name:                    gfx1100                            
+  Marketing Name:          Radeon RX 7900 GRE                 
+  Vendor Name:             AMD                                
+      Name:                    amdgcn-amd-amdhsa--gfx1100         
+      Name:                    amdgcn-amd-amdhsa--gfx11-generic   
+======================================== ROCm System Management Interface ========================================
+================================================== Concise Info ==================================================
+Device  Node  IDs              Temp    Power  Partitions          SCLK    MCLK   Fan  Perf  PwrCap  VRAM%  GPU%  
+[3m              (DID,     GUID)  (Edge)  (Avg)  (Mem, Compute, ID)                                                 [0m
+==================================================================================================================
+0       1     0x744c,   35881  49.0°C  28.0W  N/A, N/A, 0         107Mhz  96Mhz  0%   auto  228.0W  14%    8%    
+==================================================================================================================
+============================================== End of ROCm SMI Log ===============================================
+===== ensure verified image =====
+===== image info =====
+image=docker.cnb.cool/micurii/hrgg/rl-kernel-ci:rocm7.2.4-gfx1100-07f8ec3
+digest=docker.cnb.cool/micurii/hrgg/rl-kernel-ci@sha256:f65d749a528eabb585e81a7f48e73bcbdb82cde4b20f45f021e9894da5de8682
+device group args=--group-add=992 --group-add=44
+===== run container ROCm CI =====
+[rocm-ci] Using interpreter: /opt/venv/bin/python3
+python: 3.12.3 (main, Mar 23 2026, 19:04:32) [GCC 13.3.0]
+torch: 2.10.0+rocm7.2.4.git3d3aa833
+torch hip: 7.2.53211
+PYTORCH_ROCM_ARCH: gfx1100
+MAX_JOBS: 8
+cuda api available: True
+device 0 AMD Radeon RX 7900 GRE gcn: gfx1100
+Requirement already satisfied: pip in /opt/venv/lib/python3.12/site-packages (26.1.2)
+Requirement already satisfied: setuptools in /opt/venv/lib/python3.12/site-packages (82.0.1)
+Requirement already satisfied: wheel in /opt/venv/lib/python3.12/site-packages (0.47.0)
+Requirement already satisfied: packaging>=24.0 in /opt/venv/lib/python3.12/site-packages (from wheel) (26.2)
+Obtaining file:///workspace/RL-Kernel
+  Checking if build backend supports build_editable: started
+  Checking if build backend supports build_editable: finished with status 'done'
+  Preparing editable metadata (pyproject.toml): started
+  Preparing editable metadata (pyproject.toml): finished with status 'done'
+Requirement already satisfied: torch>=2.4.1 in /opt/venv/lib/python3.12/site-packages (from RL-Kernel==0.1.0) (2.10.0+rocm7.2.4.lw.git3d3aa833)
+Requirement already satisfied: numpy in /opt/venv/lib/python3.12/site-packages (from RL-Kernel==0.1.0) (2.4.6)
+Requirement already satisfied: pytest in /opt/venv/lib/python3.12/site-packages (from RL-Kernel==0.1.0) (9.0.3)
+Collecting tabulate (from RL-Kernel==0.1.0)
+  Downloading tabulate-0.10.0-py3-none-any.whl.metadata (40 kB)
+Requirement already satisfied: filelock in /opt/venv/lib/python3.12/site-packages (from torch>=2.4.1->RL-Kernel==0.1.0) (3.29.0)
+Requirement already satisfied: typing-extensions>=4.10.0 in /opt/venv/lib/python3.12/site-packages (from torch>=2.4.1->RL-Kernel==0.1.0) (4.15.0)
+Requirement already satisfied: setuptools in /opt/venv/lib/python3.12/site-packages (from torch>=2.4.1->RL-Kernel==0.1.0) (82.0.1)
+Requirement already satisfied: sympy>=1.13.3 in /opt/venv/lib/python3.12/site-packages (from torch>=2.4.1->RL-Kernel==0.1.0) (1.14.0)
+Requirement already satisfied: networkx>=2.5.1 in /opt/venv/lib/python3.12/site-packages (from torch>=2.4.1->RL-Kernel==0.1.0) (3.6.1)
+Requirement already satisfied: jinja2 in /opt/venv/lib/python3.12/site-packages (from torch>=2.4.1->RL-Kernel==0.1.0) (3.1.6)
+Requirement already satisfied: fsspec>=0.8.5 in /opt/venv/lib/python3.12/site-packages (from torch>=2.4.1->RL-Kernel==0.1.0) (2026.4.0)
+Requirement already satisfied: triton==3.6.0+rocm7.2.4.git4ed88892 in /opt/venv/lib/python3.12/site-packages (from torch>=2.4.1->RL-Kernel==0.1.0) (3.6.0+rocm7.2.4.git4ed88892)
+Requirement already satisfied: mpmath<1.4,>=1.1.0 in /opt/venv/lib/python3.12/site-packages (from sympy>=1.13.3->torch>=2.4.1->RL-Kernel==0.1.0) (1.3.0)
+Requirement already satisfied: MarkupSafe>=2.0 in /opt/venv/lib/python3.12/site-packages (from jinja2->torch>=2.4.1->RL-Kernel==0.1.0) (3.0.3)
+Requirement already satisfied: iniconfig>=1.0.1 in /opt/venv/lib/python3.12/site-packages (from pytest->RL-Kernel==0.1.0) (2.3.0)
+Requirement already satisfied: packaging>=22 in /opt/venv/lib/python3.12/site-packages (from pytest->RL-Kernel==0.1.0) (26.2)
+Requirement already satisfied: pluggy<2,>=1.5 in /opt/venv/lib/python3.12/site-packages (from pytest->RL-Kernel==0.1.0) (1.6.0)
+Requirement already satisfied: pygments>=2.7.2 in /opt/venv/lib/python3.12/site-packages (from pytest->RL-Kernel==0.1.0) (2.20.0)
+Downloading tabulate-0.10.0-py3-none-any.whl (39 kB)
+Building wheels for collected packages: RL-Kernel
+  Building editable for RL-Kernel (pyproject.toml): started
+  Building editable for RL-Kernel (pyproject.toml): finished with status 'done'
+  Created wheel for RL-Kernel: filename=rl_kernel-0.1.0-0.editable-cp312-cp312-linux_x86_64.whl size=10321 sha256=51a0f3f599b212025d12dfc6d4969e087155860f6fecf858220ce52d6ab71717
+  Stored in directory: /tmp/pip-ephem-wheel-cache-f6rue8bz/wheels/ef/22/ff/05c5eed22d44ac21285996de64c411c5f5587065486089b9c3
+Successfully built RL-Kernel
+Installing collected packages: tabulate, RL-Kernel
+Successfully installed RL-Kernel-0.1.0 tabulate-0.10.0
+[rocm-ci] Using PyTorch SDPA ROCm attention fallback
+INFO 07-03 14:13:08 [RL-Kernel]: RL-Engine initialized with AMD ROCm backend (Version: 7.2.53211)
+INFO 07-03 14:13:08 [RL-Kernel]: KernelRegistry initialized for rocm
+WARNING 07-03 14:13:08 [RL-Kernel]: Backend ROCM_AITER unavailable: No module named 'rl_engine.kernels.ops.rocm.aiter'. Falling back...
+WARNING 07-03 14:13:08 [RL-Kernel]: Backend TRITON_GENERIC unavailable: No module named 'rl_engine.kernels.ops.triton.generic'. Falling back...
+[rocm-ci] backend logp: NativeLogpOp
+[rocm-ci] backend attn: NativeAttentionOp
+[rocm-ci] backend linear_logp: TritonLinearLogpOp
+[rocm-ci] backend ratio_kl: TritonRatioKLOp
+..................ssssssssssssssssssssssssssssssssssssssssssssssssssssss [ 39%]
+ssssssssssssssssssssssssssss............................................ [ 78%]
+................sssssssss...............                                 [100%]
+=========================== short test summary info ============================
+SKIPPED [40] tests/test_attention_correctness.py:260: current torch build is not CUDA platform
+SKIPPED [40] tests/test_attention_correctness.py:301: ROCm FlashAttentionOp is unavailable: ROCm FlashAttention requires a ROCm-compatible flash-attn installation. See docs/getting_started/installation.md#rocm-backend.
+SKIPPED [2] tests/test_attention_correctness.py:326: ROCm FlashAttentionOp is unavailable: ROCm FlashAttention requires a ROCm-compatible flash-attn installation. See docs/getting_started/installation.md#rocm-backend.
+SKIPPED [1] tests/test_linear_logp.py:513: Fused linear log-prob SM90 kernel requires a Hopper (sm_90) GPU with the extension built KERNEL_ALIGN_FORCE_SM90=1.
+SKIPPED [1] tests/test_linear_logp.py:527: Fused linear log-prob SM90 kernel requires a Hopper (sm_90) GPU with the extension built KERNEL_ALIGN_FORCE_SM90=1.
+SKIPPED [2] tests/test_linear_logp.py:538: Fused linear log-prob SM90 kernel requires a Hopper (sm_90) GPU with the extension built KERNEL_ALIGN_FORCE_SM90=1.
+SKIPPED [1] tests/test_linear_logp.py:567: Fused linear log-prob SM90 kernel requires a Hopper (sm_90) GPU with the extension built KERNEL_ALIGN_FORCE_SM90=1.
+SKIPPED [1] tests/test_linear_logp.py:579: Fused linear log-prob SM90 kernel requires a Hopper (sm_90) GPU with the extension built KERNEL_ALIGN_FORCE_SM90=1.
+SKIPPED [1] tests/test_linear_logp.py:591: Fused linear log-prob SM90 kernel requires a Hopper (sm_90) GPU with the extension built KERNEL_ALIGN_FORCE_SM90=1.
+SKIPPED [1] tests/test_linear_logp.py:614: Fused linear log-prob SM90 kernel requires a Hopper (sm_90) GPU with the extension built KERNEL_ALIGN_FORCE_SM90=1.
+SKIPPED [1] tests/test_linear_logp.py:632: Fused linear log-prob SM90 kernel requires a Hopper (sm_90) GPU with the extension built KERNEL_ALIGN_FORCE_SM90=1.
+93 passed, 91 skipped in 9.42s
+exit_code=0
